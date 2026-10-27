@@ -17,6 +17,7 @@ import type {
   ProjectSnapshot,
   ProjectSummary
 } from '@shared/types'
+import { snapshotPromptPreset } from '@shared/promptPresets'
 import { visualSourceOf } from '@shared/script'
 import { getDb } from './db'
 import { assetUrl, projectDir, projectsRoot } from './paths'
@@ -51,6 +52,7 @@ const toProject = (r: Row): Project => ({
   step: r.step,
   coverAssetId: r.cover_asset_id,
   editor: { ...DEFAULT_EDITOR, ...JSON.parse(r.editor_json || '{}') },
+  promptProfile: r.prompt_profile_json ? JSON.parse(r.prompt_profile_json) : null,
   createdAt: r.created_at,
   updatedAt: r.updated_at
 })
@@ -156,14 +158,15 @@ export function listProjects(): ProjectSummary[] {
 
 export function createProject(input: NewProjectInput): Project {
   const s = getSettings()
+  const promptProfile = snapshotPromptPreset(s, input.promptPresetId)
   const now = Date.now()
   const id = randomUUID()
   const tts = input.ttsProvider ?? s.defaultTtsProvider
   getDb()
     .prepare(
       `INSERT INTO projects (id, title, synopsis, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
-        image_model, video_model, status, step, editor_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)`
+        image_model, video_model, status, step, editor_json, prompt_profile_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -178,6 +181,7 @@ export function createProject(input: NewProjectInput): Project {
       s.imageModel,
       s.videoModel,
       JSON.stringify(DEFAULT_EDITOR),
+      promptProfile ? JSON.stringify(promptProfile) : null,
       now,
       now
     )
@@ -193,15 +197,20 @@ export function getProject(id: string): Project {
 
 export function getBundle(id: string): ProjectBundle {
   const db = getDb()
+  const saved = db.prepare('SELECT state_json FROM visual_plans WHERE project_id = ?').get(id) as { state_json: string } | undefined
+  const continuity = saved ? JSON.parse(saved.state_json) : null
   return {
+    visualCorrections: continuity?.corrections ?? [],
+    visualDiagnostics: continuity?.diagnostics ?? [],
+    visualContinuity: continuity?.plan ? { ...continuity.plan, version: continuity.version } : null,
     project: getProject(id),
     characters: (db.prepare('SELECT * FROM characters WHERE project_id = ? ORDER BY sort').all(id) as Row[]).map(toCharacter),
     clips: (db.prepare('SELECT * FROM clips WHERE project_id = ? ORDER BY sort').all(id) as Row[]).map(toClip),
     assets: (db.prepare('SELECT * FROM assets WHERE project_id = ? ORDER BY created_at').all(id) as Row[]).map(toAsset),
     jobs: (
       db
-        .prepare("SELECT * FROM jobs WHERE project_id = ? AND (status IN ('queued','running') OR updated_at > ?) ORDER BY created_at")
-        .all(id, Date.now() - 10 * 60 * 1000) as Row[]
+        .prepare("SELECT * FROM jobs WHERE project_id = ? AND (status IN ('queued','running') OR updated_at > ? OR id IN (SELECT id FROM jobs AS latest WHERE latest.project_id = ? AND latest.kind IN ('visuals','story','publication','thumbnail') AND latest.rowid = (SELECT newer.rowid FROM jobs AS newer WHERE newer.project_id = latest.project_id AND newer.kind = latest.kind ORDER BY newer.created_at DESC, newer.rowid DESC LIMIT 1))) ORDER BY created_at, rowid")
+        .all(id, Date.now() - 10 * 60 * 1000, id) as Row[]
     ).map(toJob)
   }
 }
@@ -219,6 +228,8 @@ export function touchProject(id: string, patch: Partial<Pick<Project, 'status' |
 
 /** Saves the editable parts of a project. Asset links stay owned by the main process. */
 export function saveSnapshot(snap: ProjectSnapshot): number {
+  if (activeProjectJob(snap.project.id, 'visuals') || activeProjectJob(snap.project.id, 'story'))
+    throw new Error('Penyusunan naskah atau visual masih berjalan. Batalkan dulu sebelum mengubah proyek.')
   const db = getDb()
   const now = Date.now()
   const p = snap.project
@@ -260,7 +271,10 @@ export function saveSnapshot(snap: ProjectSnapshot): number {
          media_in_ms = excluded.media_in_ms, voice_in_ms = excluded.voice_in_ms, voice_out_ms = excluded.voice_out_ms,
          voice_start_ms = excluded.voice_start_ms`
     )
-    for (const c of snap.clips)
+    const approveVisual = db.prepare('UPDATE clips SET visual_source = ? WHERE id = ? AND project_id = ?')
+    for (const c of snap.clips) {
+      const previous = db.prepare('SELECT visual_prompt FROM clips WHERE id = ? AND project_id = ?').get(c.id, p.id) as { visual_prompt: string } | undefined
+      if (previous && previous.visual_prompt !== c.visualPrompt && c.visualPrompt.trim()) approveVisual.run(visualSourceOf(c), c.id, p.id)
       upClip.run({
         ...c,
         projectId: p.id,
@@ -274,6 +288,7 @@ export function saveSnapshot(snap: ProjectSnapshot): number {
         voiceOutMs: c.voiceOutMs == null ? null : Math.round(c.voiceOutMs),
         voiceStartMs: Math.round(c.voiceStartMs ?? 0)
       })
+    }
   })()
   return now
 }
@@ -299,10 +314,11 @@ export function duplicateProject(id: string): ProjectSummary {
     const p = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Row
     db.prepare(
       `INSERT INTO projects (id, title, synopsis, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
-         image_model, video_model, video_resolution, status, step, cover_asset_id, editor_json, created_at, updated_at)
+         image_model, video_model, video_resolution, status, step, cover_asset_id, editor_json, prompt_profile_json, created_at, updated_at)
        SELECT @newId, @title, synopsis, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
-         image_model, video_model, video_resolution, status, step, @cover, editor_json, @now, @now FROM projects WHERE id = @id`
+         image_model, video_model, video_resolution, status, step, @cover, editor_json, prompt_profile_json, @now, @now FROM projects WHERE id = @id`
     ).run({ newId, id, title: `${p.title} (salinan)`, cover: mapId(p.cover_asset_id), now })
+    db.prepare('INSERT INTO publication_materials (project_id, state_json) SELECT ?, state_json FROM publication_materials WHERE project_id = ?').run(newId, id)
     for (const a of src.assets) {
       db.prepare(
         `INSERT INTO assets (id, project_id, clip_id, character_id, kind, provider, model, prompt, remote_id, remote_url, local_path,
@@ -524,8 +540,8 @@ export function applyVisuals(projectId: string, characters: { name: string; desc
       const ids = [...new Set(v.characterNames.map((n) => byName.get(n.trim().toLowerCase())).filter((x): x is string => !!x))]
       update.run({ ...v, projectId, visualSource: visualSourceOf(clip), characterIds: JSON.stringify(ids) })
     }
-    db.prepare(
-      "UPDATE projects SET status = CASE WHEN status IN ('draft', 'script') THEN 'storyboard' ELSE status END, step = 3, updated_at = ? WHERE id = ?"
+    if (scenes.length) db.prepare(
+      "UPDATE projects SET status = CASE WHEN status IN ('draft', 'script') THEN 'storyboard' ELSE status END, updated_at = ? WHERE id = ?"
     ).run(Date.now(), projectId)
   })()
 }

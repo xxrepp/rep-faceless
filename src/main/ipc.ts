@@ -20,6 +20,7 @@ import {
   estimateCredits,
   forgetEstimates,
   generateCharacterSheet,
+  generateThumbnail,
   generateClipImage,
   generateClipTts,
   generateClipVideo,
@@ -55,7 +56,10 @@ import * as flow from './services/flow2api'
 import * as flowSetup from './flowSetup'
 import * as hf from './services/higgsfield'
 import * as llm from './services/llm'
-import { generateScript, generateVisuals, generateMusicPrompt } from './story'
+import { generateMusicPrompt } from './story'
+import { startScriptPlanning } from './scriptPlanning'
+import { getPublication, savePublication, generatePublication } from './publication'
+import { startVisualPlanning } from './visualPlanning'
 import { generateScenePulse, installScenePulse } from './scenePulse'
 import { scenePulseStatus } from './scenePulseRuntime'
 
@@ -96,9 +100,22 @@ export function registerIpc(): void {
   handle('projects:remove', (id: string) => removeProject(id))
   handle('projects:duplicate', (id: string) => duplicateProject(id))
 
-  handle('story:script', (projectId: string) => generateScript(projectId))
+  handle('story:script', (projectId: string, mode?: 'resume' | 'new') => startScriptPlanning(projectId, mode === 'new' ? 'new' : 'resume'))
   handle('story:musicPrompt', (projectId: string) => generateMusicPrompt(projectId))
-  handle('story:visuals', (projectId: string, mode: 'missing' | 'all') => generateVisuals(projectId, mode === 'all' ? 'all' : 'missing'))
+  handle('story:visuals', (projectId: string, mode: 'missing' | 'all') => startVisualPlanning(projectId, mode === 'all' ? 'all' : 'missing'))
+
+  handle('publication:get', (id: string) => getPublication(id))
+  handle('publication:save', (id: string, patch: Parameters<typeof savePublication>[1]) => savePublication(id, patch))
+  handle('publication:generate', (id: string) => generatePublication(id))
+  handle('publication:thumbnail', (id: string) => generateThumbnail(id))
+  handle('publication:saveThumbnail', async (id: string, assetId: string) => {
+    const asset = getAsset(assetId)
+    if (!asset || asset.projectId !== id || asset.meta.purpose !== 'thumbnail') throw new Error('Thumbnail tidak ditemukan di proyek ini.')
+    const result = await dialog.showSaveDialog(BrowserWindow.getFocusedWindow()!, { title: 'Simpan thumbnail', defaultPath: join(defaultExportFolder(), `thumbnail${extname(asset.localPath)}`), filters: [{ name: 'Gambar', extensions: [extname(asset.localPath).slice(1)] }] })
+    if (result.canceled || !result.filePath) return null
+    copyFileSync(assetAbsPath(id, asset.localPath), result.filePath)
+    return result.filePath
+  })
 
   handle('generate:clipImage', (clipId: string) => generateClipImage(clipId))
   handle('generate:clipVideo', (clipId: string) => generateClipVideo(clipId))

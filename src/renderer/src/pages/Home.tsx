@@ -56,6 +56,7 @@ export function Home() {
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9')
   const [styleId, setStyleId] = useState('stickman')
   const [tts, setTts] = useState<TtsProvider>('gemini')
+  const [promptPresetId, setPromptPresetId] = useState('original')
   const [creating, setCreating] = useState(false)
 
   const refresh = (): void => {
@@ -70,6 +71,7 @@ export function Home() {
     void window.api.settings.keys().then(setKeys)
     void window.api.settings.get().then((s) => {
       setAppSettings(s)
+      setPromptPresetId(s.promptPresets[0]?.id ?? 'original')
       setTts(s.defaultTtsProvider)
       setLanguage(s.defaultLanguage)
     })
@@ -114,9 +116,10 @@ export function Home() {
   }, [projects, filter, query])
 
   const start = async (): Promise<void> => {
+    if (!appSettings) return
     setCreating(true)
     try {
-      const b = await window.api.projects.create({ synopsis, durationSec, language, aspectRatio, styleId, ttsProvider: tts })
+      const b = await window.api.projects.create({ synopsis, durationSec, language, aspectRatio, styleId, ttsProvider: tts, promptPresetId })
       go({ name: 'project', id: b.project.id })
     } catch (e) {
       toast('error', errorText(e))
@@ -199,7 +202,14 @@ export function Home() {
               placeholder="Contoh: Gajah Mada bersumpah tidak akan menikmati palapa sebelum Nusantara bersatu. Para menteri menertawakannya, tapi dia membuktikannya…"
               className="resize-none bg-transparent text-lg leading-relaxed outline-none placeholder:text-muted/70"
             />
-            <div className="flex flex-wrap items-center gap-2 border-t border-dashed border-line pt-3.5">
+            <div className="flex flex-wrap items-center gap-3 border-t border-dashed border-line pt-3.5">
+              <span className="text-sm font-semibold">Preset prompt</span>
+              <Select label="Preset prompt proyek baru" value={promptPresetId} onChange={setPromptPresetId} disabled={creating || !appSettings}
+                options={[{ value: 'original', label: 'Asli (bawaan aplikasi)' }, ...(appSettings?.promptPresets ?? []).map(p => ({ value: p.id, label: p.name }))]}
+                className="min-w-[240px] max-w-full" />
+              <span className="text-xs text-ink-2">Kelola slot di Pengaturan lanjutan.</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <Select
                 variant="pill"
                 label="Durasi"
@@ -219,7 +229,7 @@ export function Home() {
               <StyleMenu value={styleId} onChange={setStyleId} />
               <Select variant="pill" label="Suara narator" value={tts} onChange={setTts} options={ttsOptions} menuWidth={280} />
               <div className="flex-1" />
-              <Button variant="primary" size="lg" loading={creating} onClick={() => void start()}>
+              <Button variant="primary" size="lg" loading={creating} disabled={!appSettings} onClick={() => void start()}>
                 Mulai
                 <ArrowRight className="size-[18px]" />
               </Button>
@@ -260,6 +270,7 @@ export function Home() {
             <button
               type="button"
               onClick={() => void start()}
+              disabled={creating || !appSettings}
               className="flex min-h-[262px] flex-col items-center justify-center gap-2.5 rounded-2xl border-[1.5px] border-dashed border-line-3 text-ink-2 hover:border-ink-2 hover:bg-surface"
             >
               <span className="flex size-[54px] items-center justify-center rounded-full border-[1.5px] border-ink bg-accent text-white shadow-ink">

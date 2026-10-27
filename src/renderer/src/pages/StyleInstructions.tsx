@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { getStyle, type VisualStyleOverride } from '@shared/styles'
 import { INSTRUCTION_LIMIT } from '@shared/storyInstructions'
-import type { AppSettings, InstructionMode } from '@shared/types'
+import type { AppSettings, InstructionMode, PromptInstructions } from '@shared/types'
 import { StyleMenu } from '../components/StyleMenu'
 import { Button, Segmented, inputCls } from '../components/ui'
 import { errorText } from '../lib/format'
 
-function StyleEditor({ id, settings, onSettings }: { id: string; settings: AppSettings; onSettings: (settings: AppSettings) => void }) {
+function StyleEditor({ id, settings, saveSettings, onDirtyChange }: { id: string; settings: AppSettings; saveSettings: (patch: Partial<PromptInstructions>) => Promise<void>; onDirtyChange: (key: string, dirty: boolean) => void }) {
   const original = getStyle(id)
   const saved = settings.visualStyleOverrides[id]
   const mode = saved?.mode ?? 'original'
@@ -19,11 +19,12 @@ function StyleEditor({ id, settings, onSettings }: { id: string; settings: AppSe
   const [message, setMessage] = useState('')
   useEffect(() => { setPrompt(savedPrompt); setHint(savedHint) }, [savedPrompt, savedHint])
   const dirty = prompt !== savedPrompt || hint !== savedHint
+  useEffect(() => onDirtyChange(`style:${id}`, dirty), [id, dirty, onDirtyChange])
 
   const persist = async (entry: VisualStyleOverride, notice: string): Promise<void> => {
     setBusy(true); setError(''); setMessage('')
     try {
-      onSettings(await window.api.settings.set({ visualStyleOverrides: { [id]: entry } }))
+      await saveSettings({ visualStyleOverrides: { ...settings.visualStyleOverrides, [id]: entry } })
       setMessage(notice)
     } catch (e) { setError(errorText(e)) }
     finally { setBusy(false) }
@@ -60,16 +61,16 @@ function StyleEditor({ id, settings, onSettings }: { id: string; settings: AppSe
   </div>
 }
 
-export function StyleInstructions({ settings, onSettings }: { settings: AppSettings; onSettings: (settings: AppSettings) => void }) {
+export function StyleInstructions({ settings, saveSettings, onDirtyChange }: { settings: AppSettings; saveSettings: (patch: Partial<PromptInstructions>) => Promise<void>; onDirtyChange: (key: string, dirty: boolean) => void }) {
   const [selected, setSelected] = useState('stickman-minimalist')
   const [visited, setVisited] = useState(['stickman-minimalist'])
   return <section className="flex min-w-0 flex-col gap-4 rounded-2xl border border-line bg-surface p-5">
     <div>
       <h2 className="text-lg font-bold">3. Gaya visual</h2>
-      <p className="mt-1 text-sm text-ink-2">Pilih gaya yang ingin kamu edit. Setiap gaya memiliki pilihan Asli/Kustom sendiri, berlaku pada semua proyek yang memilih gaya tersebut. Thumbnail tetap contoh bawaan, bukan pratinjau hasil kustom.</p>
+      <p className="mt-1 text-sm text-ink-2">Pilih gaya yang ingin kamu edit. Setiap gaya memiliki pilihan Asli/Kustom sendiri, disimpan di slot prompt ini. Thumbnail tetap contoh bawaan, bukan pratinjau hasil kustom.</p>
     </div>
     <div><StyleMenu value={selected} onChange={id => { setSelected(id); setVisited(ids => ids.includes(id) ? ids : [...ids, id]) }} /></div>
-    {visited.map(id => <div key={id} className={selected === id ? '' : 'hidden'}><StyleEditor id={id} settings={settings} onSettings={onSettings} /></div>)}
+    {visited.map(id => <div key={id} className={selected === id ? '' : 'hidden'}><StyleEditor id={id} settings={settings} saveSettings={saveSettings} onDirtyChange={onDirtyChange} /></div>)}
     <p className="text-xs text-ink-2">Perubahan gaya berlaku saat membuat rencana visual, gambar, dan reference sheet baru. Buat ulang reference sheet lama jika kamu ingin karakter mengikuti gaya baru.</p>
   </section>
 }

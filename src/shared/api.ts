@@ -19,6 +19,7 @@ import type {
   MusicPrompt,
   NewProjectInput,
   ProjectBundle,
+  PublicationMaterials,
   ProjectSnapshot,
   ProjectSummary,
   TtsProvider,
@@ -43,11 +44,18 @@ export interface StudioApi {
   }
   story: {
     /** Idea → scene-by-scene script (story and voice-over). */
-    script(projectId: string): Promise<ProjectBundle>
+    script(projectId: string, mode?: 'resume' | 'new'): Promise<Job>
     /** Script → one image plan per scene; "missing" skips scenes whose plan still matches their story. */
-    visuals(projectId: string, mode: 'missing' | 'all'): Promise<ProjectBundle>
+    visuals(projectId: string, mode: 'missing' | 'all'): Promise<Job>
     /** A background-music prompt that fits the finished script, for use in Suno or another music AI. */
     musicPrompt(projectId: string): Promise<MusicPrompt>
+  }
+  publication: {
+    get(projectId: string): Promise<PublicationMaterials>
+    save(projectId: string, patch: Pick<PublicationMaterials, 'title' | 'description' | 'thumbnailPrompt'>): Promise<PublicationMaterials>
+    generate(projectId: string): Promise<Job>
+    thumbnail(projectId: string): Promise<Job>
+    saveThumbnail(projectId: string, assetId: string): Promise<string | null>
   }
   generate: {
     clipImage(clipId: string): Promise<Job>

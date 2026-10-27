@@ -1,6 +1,7 @@
 /* Validate packaged resources and invoke the shipped headless backend without opening the app UI. */
 const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process'),crypto=require('node:crypto'),assert=require('node:assert/strict')
-const root=path.resolve(__dirname,'..'),app=path.join(root,'dist/win-unpacked'),resources=path.join(app,'resources')
+const root=path.resolve(__dirname,'..'),app=process.env.STUDIO_PACKAGED_APP || path.join(root,'dist/win-unpacked'),resources=path.join(app,'resources')
+assert.equal(fs.readFileSync(path.join(resources,'licenses/GSAP-README.md'),'utf8'),fs.readFileSync(path.join(root,'node_modules/gsap/README.md'),'utf8'),'The packaged GSAP notice must survive dependency README stripping')
 const origin=JSON.parse(fs.readFileSync(path.join(resources,'scenepulse/ORIGIN.json'),'utf8'))
 for(const record of origin.files) assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(resources,'scenepulse/skill',record.file))).digest('hex'),record.sha256)
 const modules=path.join(resources,'app.asar.unpacked/node_modules'),exe=path.join(app,'Bang Story.exe'),cli=path.join(modules,'hyperframes/bin/hyperframes.mjs')

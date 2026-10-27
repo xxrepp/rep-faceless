@@ -220,14 +220,25 @@ export const useProject = create<ProjectState>((set, get) => {
     },
 
     applyClip: (clipId, patch) => set({ clips: get().clips.map((c) => (c.id === clipId ? { ...c, ...patch } : c)) }),
-    applyCharacter: (characterId, patch) =>
-      set({ characters: get().characters.map((c) => (c.id === characterId ? { ...c, ...patch } : c)) }),
+    applyCharacter: (characterId, patch) => {
+      if (patch.projectId && patch.projectId !== get().project?.id) return
+      const characters = get().characters
+      if (characters.some((c) => c.id === characterId))
+        set({ characters: characters.map((c) => c.id === characterId ? { ...c, ...patch } : c) })
+      else if (patch.id && patch.projectId && patch.name && typeof patch.description === 'string' && typeof patch.sort === 'number')
+        set({ characters: [...characters, patch as Character] })
+    },
     addAsset: (asset) => {
       if (asset.projectId !== get().project?.id) return
       set({ assets: { ...get().assets, [asset.id]: asset } })
     },
     upsertJob: (job) => {
       if (job.projectId !== get().project?.id) return
+      const previous = get().jobs[job.id]
+      // The IPC start reply may arrive after the first progress event. Never rewind its stage.
+      if (['visuals', 'story', 'publication', 'thumbnail'].includes(job.kind) && previous && (previous.updatedAt > job.updatedAt ||
+          (previous.status !== 'queued' && job.status === 'queued') ||
+          (!isRunning(previous) && isRunning(job)))) return
       set({ jobs: { ...get().jobs, [job.id]: job } })
     }
   }
@@ -240,7 +251,7 @@ export function jobFor(jobs: Record<string, Job>, kind: Job['kind'], target: { c
     if (j.kind !== kind) continue
     if (target.clipId && j.clipId !== target.clipId) continue
     if (target.characterId && j.characterId !== target.characterId) continue
-    if (!best || j.createdAt > best.createdAt) best = j
+    if (!best || j.createdAt >= best.createdAt) best = j
   }
   return best
 }

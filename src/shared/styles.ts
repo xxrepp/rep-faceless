@@ -69,6 +69,18 @@ export const VISUAL_STYLES: VisualStyle[] = [
     characterHint: 'a friendly flat vector cartoon character with simple geometric features'
   },
   {
+    id: 'gravity-falls',
+    name: 'Gravity Falls',
+    category: '2d',
+    niche: 'Misteri, petualangan, komedi',
+    swatch: '#316D70',
+    ink: '#FFF8E9',
+    prompt:
+      '2D hand-drawn television cartoon frame in the visual style of Gravity Falls. Clean bold dark outlines, rounded simplified shapes, expressive faces with large white oval eyes and small black pupils, simple noses, curved mouths and clear eyebrows. Stylized varied body proportions, simplified hands, readable silhouettes, flat muted warm colors and restrained cel shading. Detailed painted backgrounds with layered depth and atmospheric lighting suited to the scene; playful mystery-adventure mood. Keep every character in the same consistent 2D cartoon style while preserving each supplied identity, age, hairstyle, skin tone and scene-specific wardrobe. Use original story characters; do not introduce characters or costumes from the show. No photorealism, 3D rendering or anime facial features. ' +
+      NO_TEXT,
+    characterHint: 'an original 2D cartoon character in the visual style of Gravity Falls, with bold dark outlines, rounded simplified forms, large white oval eyes with small black pupils, expressive eyebrows and mouth, a clear silhouette, flat colors and minimal cel shading; preserve the supplied identity, age, hair, skin tone and outfit rather than copying a show character'
+  },
+  {
     id: 'whiteboard',
     name: 'Whiteboard doodle',
     category: '2d',

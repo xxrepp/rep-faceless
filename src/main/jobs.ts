@@ -6,7 +6,7 @@ import { getSettings } from './settings'
 import { WorkQueue } from './workQueue'
 import { FlowSetupError } from '@shared/flowErrors'
 
-export type QueueName = 'higgsfield' | 'flow2api' | 'flow2api-sheet' | 'flow2api-video' | 'tts' | 'whisper' | 'export' | 'effects'
+export type QueueName = 'visuals' | 'higgsfield' | 'flow2api' | 'flow2api-sheet' | 'flow2api-video' | 'tts' | 'whisper' | 'export' | 'effects'
 
 export interface TaskCtx {
   jobId: string
@@ -20,7 +20,7 @@ export type Task = (ctx: TaskCtx) => Promise<string | void | { message: string }
 
 // Whisper uses most CPU cores by itself, so it runs one file at a time.
 // Sheets need their own lane: a scene may wait for a sheet queued after it.
-const LIMITS: Record<QueueName, number> = { higgsfield: 3, flow2api: 2, 'flow2api-sheet': 1, 'flow2api-video': 1, tts: 2, whisper: 1, export: 1, effects: 1 }
+const LIMITS: Record<QueueName, number> = { visuals: 1, higgsfield: 3, flow2api: 2, 'flow2api-sheet': 1, 'flow2api-video': 1, tts: 2, whisper: 1, export: 1, effects: 1 }
 const queues = Object.fromEntries(Object.keys(LIMITS).map(name => [name, new WorkQueue(() => name === 'flow2api' ? getSettings().flowImageConcurrency : LIMITS[name as QueueName])])) as Record<QueueName, WorkQueue>
 const controllers = new Map<string, AbortController>()
 const pending = new Map<string, QueueName>()
@@ -60,6 +60,7 @@ export function runJob(job: Job, queue: QueueName, task: Task): Job {
       if (ctrl.signal.aborted) throw new Error('Canceled')
       emit.job(updateJob(job.id, { status: 'running', progress: 0.02 }))
       const result = await task(ctx)
+      ctrl.signal.throwIfAborted()
       const extra =
         typeof result === 'string' ? { resultAssetId: result, message: null } : { message: result?.message ?? null }
       emit.job(updateJob(job.id, { status: 'done', progress: 1, ...extra }))

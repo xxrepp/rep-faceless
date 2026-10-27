@@ -17,6 +17,8 @@ extraResources:
     to: licenses/FFmpeg-LICENSE.txt
   - from: resources/licenses
     to: licenses
+  - from: node_modules/gsap/README.md
+    to: licenses/GSAP-README.md
   - from: resources/whisper
     to: whisper
 asarUnpack:

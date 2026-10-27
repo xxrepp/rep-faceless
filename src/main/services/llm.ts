@@ -6,6 +6,7 @@ import * as gemini from './gemini'
 import * as flow from './flow2api'
 import { readError } from './http'
 import { extractJson } from './json'
+import { retryAfterDelay } from './visualRetry'
 
 const STALE_MS = 24 * 60 * 60 * 1000
 const GENERATE_TIMEOUT_MS = 4 * 60 * 1000
@@ -23,7 +24,9 @@ export class LlmError extends Error {
   constructor(
     message: string,
     public status = 0,
-    public detail = ''
+    public detail = '',
+    public retryAfterMs = 0,
+    public override cause?: unknown
   ) {
     super(message)
   }
@@ -77,11 +80,13 @@ async function call<T>(c: Compat, path: string, init: RequestInit = {}): Promise
   } catch (e) {
     if ((e as Error).name === 'TimeoutError') throw new LlmError(`${PROVIDER_NAMES[c.provider]} terlalu lama merespons.`, 408)
     if ((e as Error).name === 'AbortError') throw e
-    throw new LlmError(`Tidak bisa terhubung ke ${c.provider === 'custom' ? c.base : PROVIDER_NAMES[c.provider]}: ${(e as Error).message}`)
+    throw new LlmError(`Tidak bisa terhubung ke ${PROVIDER_NAMES[c.provider]}.`, 0, '', 0, e)
   }
   if (!res.ok) {
     const detail = await readError(res)
-    throw new LlmError(friendlyStatus(c, res.status, detail), res.status, detail)
+    const after = res.headers.get('retry-after')
+    const retryAfterMs = retryAfterDelay(after)
+    throw new LlmError(friendlyStatus(c, res.status, detail), res.status, detail, retryAfterMs)
   }
   return (await res.json()) as T
 }
@@ -232,8 +237,7 @@ class BadReply extends Error {}
 function formatUnsupported(e: unknown): boolean {
   if (!(e instanceof LlmError)) return false
   if (![400, 404, 422].includes(e.status)) return false
-  if (KEY_PROBLEM.test(e.detail) || /does not exist|model.*not found/i.test(e.detail)) return false
-  if (e.status === 400) return true
+  if (KEY_PROBLEM.test(e.detail) || /does not exist|model.*(?:not found|unavailable|not supported)|unsupported model/i.test(e.detail)) return false
   return /response_format|json|schema|structured|parameter|endpoint|support/i.test(e.detail)
 }
 
@@ -243,10 +247,8 @@ async function chatJson(c: Compat, model: string, system: string, prompt: string
   const modes: Mode[] = ['json_schema', 'json_object', 'plain']
   let lastError: unknown = null
   for (const mode of modes) {
-    const sys =
-      mode === 'json_schema'
-        ? system
-        : `${system}\n\nReply with ONE JSON object only (no markdown, no commentary) that matches this JSON Schema:\n${schemaText}`
+    // Compatible routes may accept response_format without forwarding/enforcing its schema.
+    const sys = `${system}\n\nRequired wire format (overrides conflicting example field names): Reply with ONE JSON object only, no markdown, matching this exact JSON Schema. Keep its field names and nesting:\n${schemaText}`
     const body: Record<string, unknown> = {
       model,
       messages: [

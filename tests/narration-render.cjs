@@ -4,7 +4,7 @@ const fs = require('node:fs'), path = require('node:path'), ts = require('typesc
 function load(file, mocks = {}) {
  const module = {exports:{}}
  const js = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src', file), 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2023}}).outputText
- new Function('require','module','exports',js)(name => mocks[name] ?? require(name),module,module.exports)
+ new Function('require','module','exports',js)(name => name === '@shared/promptPresets' ? load('shared/promptPresets.ts') : mocks[name] ?? require(name),module,module.exports)
  return module.exports
 }
 const speech = load('shared/speech.ts')
@@ -23,7 +23,7 @@ test('Gemini delivery instructions are metadata, never transcript', async () => 
  const api=load('main/services/gemini.ts', {
   '@shared/speech':speech, '@shared/models':{}, '../secrets':{requireSecret:()=> 'fake'},
   '../settings':{getSettings:()=>({geminiTtsModel:'gemini-3.8-flash-tts'})},
-  './audio':{isWav:()=>true}, './json':{},
+  './audio':{isWav:()=>true}, './json':{}, './visualRetry':load('main/services/visualRetry.ts'),
   '@google/genai':{GoogleGenAI:class {models={generateContent:async r=>{request=r;return {candidates:[{content:{parts:[{inlineData:{data:Buffer.from('RIFF').toString('base64'),mimeType:'audio/wav'}}]}}]}}}}}
  })
  await api.speak('Hello. <sigh>\n<long pause>\nWorld.','Kore','en')

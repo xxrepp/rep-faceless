@@ -114,7 +114,9 @@ export async function renderScenePulseVisual(effect: SceneEffect, durationMs: nu
   const root = dirname(base), length = durationMs/1000
   copyFileSync(moduleFile('gsap/dist/gsap.min.js'),join(root,'gsap.min.js'))
   copyFileSync(moduleFile('gsap/package.json'),join(root,'GSAP-PACKAGE.json'))
-  copyFileSync(moduleFile('gsap/README.md'),join(root,'GSAP-README.md'))
+  // electron-builder strips dependency READMEs, so retain this notice as an explicit resource.
+  const gsapReadme = app.isPackaged ? join(process.resourcesPath,'licenses/GSAP-README.md') : moduleFile('gsap/README.md')
+  copyFileSync(gsapReadme,join(root,'GSAP-README.md'))
   const color = EFFECT_STYLES.find(s=>s.id===styleId)!.accentColor
   const animations: string[] = []
   const graphics = effect.graphics.map((g,i)=>{

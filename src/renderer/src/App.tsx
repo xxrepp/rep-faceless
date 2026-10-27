@@ -25,7 +25,7 @@ export function App() {
       window.api.on.job((job) => {
         p().upsertJob(job)
         const { toast } = useApp.getState()
-        if (job.status === 'failed' && job.error) toast('error', `${KIND_LABEL[job.kind] ?? 'Proses'} gagal: ${job.error}`)
+        if (job.status === 'failed' && job.error && job.kind !== 'visuals') toast('error', `${KIND_LABEL[job.kind] ?? 'Proses'} gagal: ${job.error}`)
         if (job.status === 'done' && job.kind === 'export' && job.message) {
           const path = job.message
           toast('success', 'Video selesai diekspor.', { label: 'Buka folder', run: () => void window.api.exporter.reveal(path) })

@@ -139,6 +139,25 @@ const MIGRATIONS: string[] = [
   INSERT OR IGNORE INTO secrets (provider, value, last_ok, last_message, checked_at)
     SELECT 'gemini-tts', value, last_ok, last_message, checked_at FROM secrets WHERE provider = 'gemini';
   DELETE FROM cache WHERE key IN ('models:gemini-tts', 'voices:gemini');
+  `,
+  `
+  CREATE TABLE visual_plans (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    state_json TEXT NOT NULL
+  );
+  `,
+  `
+  ALTER TABLE projects ADD COLUMN prompt_profile_json TEXT;
+  `,
+  `
+  CREATE TABLE script_drafts (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    state_json TEXT NOT NULL
+  );
+  CREATE TABLE publication_materials (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    state_json TEXT NOT NULL
+  );
   `
 ]
 

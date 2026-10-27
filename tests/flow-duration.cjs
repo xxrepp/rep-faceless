@@ -4,7 +4,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),ts=r
 function load(file,mocks={},expose='') {
  const module={exports:{}}
  const js=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src',file),'utf8')+expose,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2023,jsx:ts.JsxEmit.ReactJSX}}).outputText
- new Function('require','module','exports',js)(name=>mocks[name]??require(name),module,module.exports)
+ new Function('require','module','exports',js)(name=>name === '@shared/promptPresets' ? load('shared/promptPresets.ts') : mocks[name]??require(name),module,module.exports)
  return module.exports
 }
 const media=load('shared/media.ts',{'./higgsfield':{}})

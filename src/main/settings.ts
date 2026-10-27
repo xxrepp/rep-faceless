@@ -1,11 +1,13 @@
 import { DEFAULT_IMAGE_MODEL, DEFAULT_VIDEO_MODEL, getImageModel, getVideoModel } from '@shared/higgsfield'
-import type { AppSettings } from '@shared/types'
+import { promptFields } from '@shared/promptPresets'
+import type { AppSettings, PromptPreset } from '@shared/types'
 import { isFlowModel } from '@shared/media'
 import { INSTRUCTION_LIMIT } from '@shared/storyInstructions'
 import { VISUAL_STYLES, type VisualStyleOverride } from '@shared/styles'
 import { getDb } from './db'
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  promptPresets: [],
   scriptInstructionsMode: 'original',
   visualInstructionsMode: 'original',
   visualStyleOverrides: {},
@@ -51,6 +53,10 @@ export function getSettings(): AppSettings {
     }
   }
   out.visualStyleOverrides = overrides
+  // Expose the old slot as a preset without rewriting it or changing existing projects.
+  if (!rows.some(row => row.key === 'promptPresets'))
+    out.promptPresets = [{ id: 'legacy', name: 'Prompt lama', ...promptFields(out) }]
+  else out.promptPresets = validatePromptPresets(out.promptPresets)
   // A provider that no longer exists (e.g. from an older build) falls back to Gemini.
   if (!(out.llmProvider in DEFAULT_SETTINGS.llmModels)) out.llmProvider = 'gemini'
   out.flowImageConcurrency = Number.isInteger(out.flowImageConcurrency) ? Math.max(1, Math.min(8, out.flowImageConcurrency)) : 2
@@ -66,7 +72,25 @@ function validStyleOverride(id: string, value: unknown): value is VisualStyleOve
   return ['original', 'custom'].includes(entry.mode) && typeof entry.prompt === 'string' && entry.prompt.length <= INSTRUCTION_LIMIT && typeof entry.characterHint === 'string' && entry.characterHint.length <= INSTRUCTION_LIMIT
 }
 
+function validatePromptPresets(value: unknown): PromptPreset[] {
+  if (!Array.isArray(value) || value.length > 100) throw new Error('Daftar preset tidak valid. Maksimal 100 slot prompt.')
+  const ids = new Set<string>(), names = new Set<string>()
+  return value.map((p: PromptPreset) => {
+    if (!p || typeof p.id !== 'string' || !p.id.trim() || p.id.length > 80 || p.id === 'original' || ids.has(p.id) ||
+        typeof p.name !== 'string' || !p.name.trim() || p.name.trim().length > 80 || names.has(p.name.trim().toLowerCase()) ||
+        !['original', 'custom'].includes(p.scriptInstructionsMode) || !['original', 'custom'].includes(p.visualInstructionsMode) ||
+        typeof p.scriptInstructions !== 'string' || p.scriptInstructions.length > INSTRUCTION_LIMIT ||
+        typeof p.visualInstructions !== 'string' || p.visualInstructions.length > INSTRUCTION_LIMIT ||
+        !p.visualStyleOverrides || typeof p.visualStyleOverrides !== 'object' || Array.isArray(p.visualStyleOverrides) ||
+        Object.entries(p.visualStyleOverrides).some(([id, entry]) => !validStyleOverride(id, entry)))
+      throw new Error('Preset tidak valid. Gunakan nama unik (maksimal 80 karakter), mode Asli/Kustom, dan instruksi yang sesuai batas.')
+    ids.add(p.id); names.add(p.name.trim().toLowerCase())
+    return { id: p.id, name: p.name.trim(), ...promptFields(p) }
+  })
+}
+
 export function setSettings(patch: Partial<AppSettings>): AppSettings {
+  if (patch.promptPresets !== undefined) patch = { ...patch, promptPresets: validatePromptPresets(patch.promptPresets) }
   for (const key of ['scriptInstructionsMode', 'visualInstructionsMode'] as const) {
     if (patch[key] !== undefined && !['original', 'custom'].includes(patch[key]!)) throw new Error('Pilih mode Asli atau Kustom.')
   }

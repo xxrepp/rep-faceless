@@ -1,0 +1,9 @@
+# Batch naskah dan materi publikasi
+
+Susun Naskah sekarang memulai job `story`. Satu klik membuat kerangka lengkap, lalu menulis maksimal 12 adegan per permintaan dengan sinopsis, kerangka, dan naskah sebelumnya sebagai konteks bersama. Setiap hasil yang valid tersimpan di `script_drafts`. Naskah yang sedang dipakai baru diganti secara transaksional setelah semua batch lengkap. Input atau adegan yang berubah membatalkan penerimaan hasil lama. Setelah gagal, batal, atau restart, tombol Lanjutkan meneruskan draft yang masih cocok. Susun ulang memulai draft baru setelah konfirmasi.
+
+Batas setiap permintaan tetap empat menit. Retry dan klasifikasi gangguan memakai utilitas `visualRequest` yang sudah ada (namanya masih mengikuti pemakai awalnya). Hanya gangguan sementara yang dicoba ulang, maksimal tiga kali; status autentikasi dan validasi dihentikan dengan pesan tersimpan. Ini mengurangi risiko timeout, tanpa menjamin provider selalu tersedia.
+
+Storyboard memiliki tombol Materi publikasi. Generate menghasilkan judul, deskripsi, dan prompt thumbnail dari naskah, pemeran, gaya visual efektif, bahasa, serta format proyek. Isian bisa diedit, disimpan, dan disalin. Buat thumbnail memakai model gambar proyek (Flow2API atau Higgsfield); Simpan gambar mengekspor file terpisah. Aset diberi metadata `purpose: thumbnail`, tanpa clip_id atau character_id, dan tidak dipasang pada cover, timeline, atau ekspor video. Materi disimpan dalam `publication_materials`; perubahan konten ditandai saat panel dibuka lagi.
+
+Verifikasi: `npm run typecheck`, `npm run build`, `node --test tests/story-instructions.cjs tests/visual-planning.cjs tests/script-publication.cjs`, dan `node scripts/check-script-publication.cjs`. UI harness memakai data sementara, provider HTTP lokal, serta gambar fixture; bukan verifikasi kualitas atau ketersediaan provider berbayar. STUDIO_TEST_APP dapat menunjuk arsip calon build untuk pengujian paket.

@@ -33,6 +33,7 @@ import { useNarration } from '../../lib/useNarration'
 import { useApp } from '../../store/app'
 import { isRunning, jobFor, useProject } from '../../store/project'
 import { CharacterModal } from './CharacterModal'
+import { PublicationPanel } from './PublicationPanel'
 
 function useAudio(): { play: (url: string) => void; stop: () => void; playing: string | null } {
   const ref = useRef<HTMLAudioElement | null>(null)
@@ -447,9 +448,10 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
 }
 
 export function StoryboardStep() {
-  const { project, clips, characters, assets, jobs, selectedClipId, select, addClip, updateProject, flush, load } = useProject()
+  const { project, clips, characters, assets, jobs, selectedClipId, select, addClip, updateProject, flush } = useProject()
   const { toast } = useApp()
   /** A character id, "new" for an unsaved one, or null. */
+  const [publicationOpen, setPublicationOpen] = useState(false)
   const [openChar, setOpenChar] = useState<string | null>(null)
   const [credits, setCredits] = useState<number | null>(null)
   const [videoCredits, setVideoCredits] = useState<number | null>(null)
@@ -544,8 +546,8 @@ export function StoryboardStep() {
     setPlanning(true)
     try {
       await flush()
-      load(await window.api.story.visuals(project.id, 'missing'))
-      toast('success', 'Visual adegan sudah disusun.')
+      if (useProject.getState().saveState === 'error') throw new Error('Simpan perubahan proyek dulu sebelum membuat visual.')
+      useProject.getState().upsertJob(await window.api.story.visuals(project.id, 'missing'))
     } catch (e) {
       toast('error', errorText(e))
     } finally {
@@ -570,6 +572,7 @@ export function StoryboardStep() {
   return (
     <div className="grid h-full grid-rows-[64px_minmax(0,1fr)_80px]">
       <div className="flex items-center gap-2 border-b border-line bg-paper px-6">
+        <Button size="sm" icon={<ImageIcon size={16} />} onClick={() => setPublicationOpen(true)}>Materi publikasi</Button>
         <span className="mr-1 text-[13px] font-semibold text-ink-2">Pemeran</span>
         <div className="scroll-thin flex min-w-0 gap-2 overflow-x-auto py-1">
           {characters.map((c) => {
@@ -746,6 +749,7 @@ export function StoryboardStep() {
           <ArrowRight className="size-[18px]" />
         </Button>
       </footer>
+      {publicationOpen && <PublicationPanel onClose={() => setPublicationOpen(false)} />}
       <CharacterModal characterId={openChar} onClose={() => setOpenChar(null)} onCreated={(id) => setOpenChar(id)} />
     </div>
   )

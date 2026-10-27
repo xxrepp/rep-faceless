@@ -6,18 +6,21 @@ import { getSecret, requireSecret } from '../secrets'
 import { getSettings, readCache, writeCache } from '../settings'
 import { isWav, pcmToWav } from './audio'
 import { extractJson } from './json'
+import { retryAfterDelay } from './visualRetry'
 
 function client(key?: string, provider: 'gemini' | 'gemini-tts' = 'gemini'): GoogleGenAI {
   return new GoogleGenAI({ apiKey: key ?? requireSecret(provider) })
 }
 
 function friendly(e: unknown): Error {
+  const original = e as { status?: number; code?: number; cause?: unknown }
+  const wrap = (message: string): Error => Object.assign(new Error(message, { cause: e }), { status: original?.status ?? original?.code ?? 0 })
   const msg = (e as Error)?.message ?? String(e)
   if (/API key not valid|API_KEY_INVALID|PERMISSION_DENIED|401|403/i.test(msg))
-    return new Error('Kunci Gemini ditolak. Periksa kunci di Pengaturan.')
-  if (/RESOURCE_EXHAUSTED|429/i.test(msg)) return new Error('Kuota Gemini habis atau terlalu banyak permintaan. Coba lagi sebentar.')
-  if (/not found|404/i.test(msg)) return new Error(`Model Gemini tidak tersedia untuk kunci ini: ${msg}`)
-  return new Error(`Gemini gagal: ${msg}`)
+    return wrap('Kunci Gemini ditolak. Periksa kunci di Pengaturan.')
+  if (/RESOURCE_EXHAUSTED|429/i.test(msg)) return wrap('Kuota Gemini habis atau terlalu banyak permintaan. Coba lagi sebentar.')
+  if (/not found|404/i.test(msg)) return wrap(`Model Gemini tidak tersedia untuk kunci ini: ${msg}`)
+  return wrap(`Gemini gagal: ${msg}`)
 }
 
 export async function testKey(key?: string, provider: 'gemini' | 'gemini-tts' = 'gemini'): Promise<KeyTestResult> {
@@ -69,17 +72,29 @@ export async function listModels(kind: 'text' | 'tts'): Promise<ModelOption[]> {
 /** Structured JSON output; falls back to schema-in-prompt for models without JSON mode (e.g. Gemma). */
 export async function generateJson(model: string, system: string, prompt: string, schema: object, signal?: AbortSignal): Promise<unknown> {
   const ai = client()
+  let retryAfterMs = 0
+  const httpOptions = signal ? {
+    retryOptions: { attempts: 1 },
+    fetch: async (...args: Parameters<typeof fetch>): Promise<Response> => {
+      const response = await fetch(...args)
+      retryAfterMs = retryAfterDelay(response.headers.get('retry-after'))
+      return response
+    }
+  } : undefined
+  const failure = (error: unknown): Error => Object.assign(friendly(error), { retryAfterMs })
   try {
     const res = await ai.models.generateContent({
       model,
       contents: prompt,
-      config: { systemInstruction: system, responseMimeType: 'application/json', responseJsonSchema: schema, abortSignal: signal }
+      config: { systemInstruction: system, responseMimeType: 'application/json', responseJsonSchema: schema, abortSignal: signal, httpOptions }
     })
     return JSON.parse(res.text ?? '')
   } catch (e) {
     if (signal?.aborted) throw new Error('Dibatalkan')
     const msg = (e as Error)?.message ?? ''
-    if (!/json|schema|mime|not supported|INVALID_ARGUMENT|Unexpected token|Expected/i.test(msg)) throw friendly(e)
+    const status = Number((e as { status?: number })?.status)
+    if ((status && ![400, 422].includes(status)) || /model.*(?:not found|unavailable|not supported)|unsupported model/i.test(msg) ||
+        !/json|schema|mime|not supported|Unexpected token|Expected/i.test(msg)) throw failure(e)
   }
   try {
     const res = await ai.models.generateContent({
@@ -87,13 +102,14 @@ export async function generateJson(model: string, system: string, prompt: string
       contents: prompt,
       config: {
         abortSignal: signal,
+        httpOptions,
         systemInstruction: `${system}\n\nReply with ONE JSON object only (no markdown, no commentary) that matches this JSON Schema:\n${JSON.stringify(schema)}`
       }
     })
     return extractJson(res.text ?? '')
   } catch (e) {
     if (signal?.aborted) throw new Error('Dibatalkan')
-    throw friendly(e)
+    throw failure(e)
   }
 }
 

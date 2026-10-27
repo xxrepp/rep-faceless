@@ -1,3 +1,4 @@
+import { projectPromptSettings } from '@shared/promptPresets'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -14,6 +15,7 @@ import { runJob, type TaskCtx } from './jobs'
 import { assetAbsPath } from './paths'
 import {
   activeJobFor,
+  activeProjectJob,
   charactersOf,
   clipsOf,
   getAsset,
@@ -30,6 +32,7 @@ import {
   updateAssetMeta,
   updateJob
 } from './repo'
+import { getPublication } from './publication'
 import { dropCache, getSettings, readCache, writeCache } from './settings'
 import { probeDurationMs, probeSize } from './services/audio'
 import * as eleven from './services/elevenlabs'
@@ -97,7 +100,7 @@ function splitAvoid(visual: string): { scene: string; avoid: string } {
  * character can change out of the outfit on their reference sheet (no spacesuit indoors).
  */
 function clipPrompt(project: Project, clip: Clip, chars: Character[], refNames: string[], limit: number): string {
-  const style = getStyle(project.styleId, getSettings().visualStyleOverrides)
+  const style = getStyle(project.styleId, projectPromptSettings(getSettings(), project).visualStyleOverrides)
   const { scene, avoid } = splitAvoid(clip.visualPrompt)
   const wardrobe = /^\s*wardrobe\s*:/im.test(scene)
   const parts = [`Scene:\n${scene}`]
@@ -115,21 +118,25 @@ function clipPrompt(project: Project, clip: Clip, chars: Character[], refNames: 
         (wardrobe ? 'Copy the costume from a sheet only for characters whose Wardrobe line says "default outfit". ' : 'Match the costume to the sheet. ') +
         'Do not copy the sheet layout, poses or plain background.'
     )
-  parts.push(`Art style: ${style.prompt}`)
+  const styleScope = 'Identity scope: character-specific rules in the art style apply only to that exact named character when present. Render only the scene cast; never add the channel protagonist or give their face, age, body, hair, costume or accessories to another character. The supplied character descriptions and scene Wardrobe take priority over shared style text.'
+  parts.push(`Art style: ${style.prompt}`, styleScope)
   if (avoid) parts.push(`Must not appear in the image: ${avoid}.`)
   parts.push(`Frame format ${project.aspectRatio}, full-bleed composition.`)
   const full = parts.join('\n\n')
   if (full.length <= limit) return full
   // Models with short prompt limits get the scene first, so trimming only loses style detail.
-  return [scene, chars.map(characterLine).join('; '), avoid && `Must not appear: ${avoid}.`, style.prompt].filter(Boolean).join('\n\n')
+  return [scene, chars.map(characterLine).join('; '), avoid && `Must not appear: ${avoid}.`, style.prompt, styleScope].filter(Boolean).join('\n\n')
 }
 
 function sheetPrompt(project: Project, c: Character): string {
-  const style = getStyle(project.styleId, getSettings().visualStyleOverrides)
+  const style = getStyle(project.styleId, projectPromptSettings(getSettings(), project).visualStyleOverrides)
   return [
-    style.prompt,
-    `Character reference sheet for "${c.name}": ${c.description}. The character is ${style.characterHint}.`,
-    'Show the SAME character three times side by side: front view, three-quarter view and side view, full body, neutral standing pose, evenly spaced, on a plain light neutral background (this overrides any background instruction above). Consistent proportions, costume and colors in all three views.'
+    `Character reference sheet for "${c.name}". Render ONLY this target identity: ${c.description}`,
+    'The target description is the authority for identity and default outfit. Shared art and presentation instructions below control rendering only; they cannot replace the target with another named person, a channel host or a recurring protagonist.',
+    `Shared art direction:\n${style.prompt}`,
+    `Shared sheet presentation guidance:\n${style.characterHint}`,
+    'Show the SAME character three times side by side: front view, three-quarter view and side view, full body, neutral standing pose, evenly spaced, on a plain light neutral background (this overrides any background instruction above). Consistent proportions, costume and colors in all three views.',
+    `Final identity check: every view depicts "${c.name}" only, with these exact physical traits and default clothing: ${c.description}. Ignore identity, sex, age, hair, outfit and accessory instructions for any other named character in the shared guidance.`
   ].join('\n\n')
 }
 
@@ -166,7 +173,7 @@ async function referenceUrls(model: HfModel, chars: Character[], signal: AbortSi
 // ---------- finishing a Higgsfield request (also used to resume after a restart) ----------
 
 interface HfPayload {
-  target: 'clip-image' | 'sheet' | 'clip-video'
+  target: 'clip-image' | 'sheet' | 'clip-video' | 'thumbnail'
   model: string
   prompt: string
 }
@@ -200,7 +207,8 @@ async function finishHiggsfield(ctx: TaskCtx, job: Job, requestId: string, paylo
     localPath: rel,
     durationMs,
     width: size?.width ?? null,
-    height: size?.height ?? null
+    height: size?.height ?? null,
+    meta: payload.target === 'thumbnail' ? { purpose: 'thumbnail' } : {}
   })
   emit.asset(asset)
   if (payload.target === 'sheet' && job.characterId) {
@@ -242,7 +250,7 @@ function updateJobPayload(jobId: string, payload: HfPayload): void {
 
 function startFlow(projectId: string, target: HfPayload['target'], clipId?: string, characterId?: string): Job {
   const video = target === 'clip-video'
-  const job = insertJob({ projectId, clipId, characterId, kind: video ? 'video' : target === 'sheet' ? 'sheet' : 'image', provider: 'flow2api' })
+  const job = insertJob({ projectId, clipId, characterId, kind: video ? 'video' : target === 'sheet' ? 'sheet' : target === 'thumbnail' ? 'thumbnail' : 'image', provider: 'flow2api' })
   emit.job(job)
   return runJob(job, target === 'sheet' ? 'flow2api-sheet' : video ? 'flow2api-video' : 'flow2api', async (ctx) => {
     const project = getProject(projectId)
@@ -252,7 +260,14 @@ function startFlow(projectId: string, target: HfPayload['target'], clipId?: stri
     const refs: string[] = []
     let prompt: string
     ctx.progress(0.05, 'Menyiapkan prompt Flow2API')
-    if (target === 'sheet') {
+    if (target === 'thumbnail') {
+      const names: string[] = []
+      for (const c of charactersOf(projectId)) {
+        const sheet = getAsset(c.sheetAssetId)
+        if (sheet && refs.length < 3) { refs.push(flow.imageData(assetAbsPath(projectId, sheet.localPath))); names.push(c.name) }
+      }
+      prompt = thumbnailPrompt(project, names)
+    } else if (target === 'sheet') {
       prompt = sheetPrompt(project, getCharacter(characterId!)) + '\nFrame format 16:9.'
     } else {
       const clip = getClip(clipId!)
@@ -284,12 +299,12 @@ function startFlow(projectId: string, target: HfPayload['target'], clipId?: stri
     const abs = assetAbsPath(projectId, rel)
     const size = await probeSize(abs)
     const durationMs = video ? await probeDurationMs(abs) : null
-    const asset = insertAsset({ projectId, clipId, characterId, kind: video ? 'video' : 'image', provider: 'flow2api', model, prompt, remoteUrl: result.url, localPath: rel, durationMs, width: size?.width ?? null, height: size?.height ?? null })
+    const asset = insertAsset({ projectId, clipId, characterId, kind: video ? 'video' : 'image', provider: 'flow2api', model, prompt, remoteUrl: result.url, localPath: rel, durationMs, width: size?.width ?? null, height: size?.height ?? null, meta: target === 'thumbnail' ? { purpose: 'thumbnail' } : {} })
     emit.asset(asset)
     if (target === 'sheet') {
       setCharacterSheet(characterId!, asset.id)
       emit.character({ characterId: characterId!, patch: { sheetAssetId: asset.id } })
-    } else {
+    } else if (target !== 'thumbnail') {
       const patch = video ? { videoAssetId: asset.id, motionType: 'video' as const, mediaInMs: 0 } : { imageAssetId: asset.id }
       patchClip(clipId!, patch)
       emit.clip({ clipId: clipId!, patch })
@@ -297,6 +312,34 @@ function startFlow(projectId: string, target: HfPayload['target'], clipId?: stri
     }
     touchProject(projectId)
     return asset.id
+  })
+}
+
+function thumbnailPrompt(project: Project, refNames: string[] = []): string {
+  const data = getPublication(project.id)
+  if (!data.thumbnailPrompt.trim()) throw new Error('Generate materi publikasi atau isi prompt thumbnail dulu.')
+  const style = getStyle(project.styleId, projectPromptSettings(getSettings(), project).visualStyleOverrides)
+  const chars = charactersOf(project.id)
+  return [data.thumbnailPrompt, `Art style: ${style.prompt}`,
+    `Character identities (render only characters needed by the chosen moment):\n${chars.map(characterLine).join('\n')}`,
+    refNames.length ? `Reference sheets in this exact order: ${refNames.join(', ')}. Match identity only; do not copy the sheet layout. Do not introduce an unrelated channel host.` : 'Use the supplied character descriptions. Do not introduce an unrelated channel host.',
+    `Standalone thumbnail, frame format ${project.aspectRatio}, full bleed, strong focal subject. Render the exact quoted hook headline specified in the thumbnail directions, large and legible at mobile size, separate from the focal subject. Thumbnail headline/typography instructions take priority over generic no-text guidance in the shared art style. No additional text, full video title, storyboard panels, logos or watermark. Keep the bottom-right clear for the duration badge.`].join('\n\n')
+}
+
+export function generateThumbnail(projectId: string): Job {
+  const existing = activeProjectJob(projectId, 'thumbnail')
+  if (existing) return existing
+  if (activeProjectJob(projectId, 'publication')) throw new Error('Tunggu konsep thumbnail selesai dulu.')
+  const project = getProject(projectId)
+  thumbnailPrompt(project)
+  if (isFlowModel(project.imageModel)) return startFlow(projectId, 'thumbnail')
+  const job = insertJob({ projectId, kind: 'thumbnail', provider: 'higgsfield' })
+  return startHiggsfield(job, async ctx => {
+    const fresh = getProject(projectId), model = getImageModel(fresh.imageModel)
+    const chars = charactersOf(projectId)
+    const refs = await referenceUrls(model, chars, ctx.signal)
+    const prompt = thumbnailPrompt(fresh, refs.names)
+    return { endpoint: model.id, body: imageBody(model, prompt, fresh.aspectRatio, refs.urls), payload: { target: 'thumbnail', model: model.id, prompt } }
   })
 }
 
@@ -457,7 +500,7 @@ export function resumeJobs(): void {
       const job = getJob(row.id)!
       runJob(job, 'higgsfield', (ctx) => finishHiggsfield(ctx, job, row.remote_id, payload as HfPayload))
     } else {
-      emit.job(updateJob(row.id, { status: 'failed', error: 'Terhenti karena aplikasi ditutup. Coba lagi.', message: null }))
+      emit.job(updateJob(row.id, { status: 'failed', error: (row.kind === 'visuals' || row.kind === 'story') ? 'Perencanaan terhenti saat aplikasi ditutup. Batch tersimpan tetap aman; klik Lanjutkan.' : 'Terhenti karena aplikasi ditutup. Coba lagi.', message: (row.kind === 'visuals' || row.kind === 'story') ? row.message : null }))
     }
   }
 }

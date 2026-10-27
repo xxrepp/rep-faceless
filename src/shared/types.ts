@@ -97,6 +97,19 @@ export interface TextOverlay extends OverlayBase {
 
 export type Overlay = ImageOverlay | TextOverlay
 
+export interface PromptInstructions {
+  scriptInstructionsMode: InstructionMode
+  visualInstructionsMode: InstructionMode
+  scriptInstructions: string
+  visualInstructions: string
+  visualStyleOverrides: Record<string, VisualStyleOverride>
+}
+
+export interface PromptPreset extends PromptInstructions {
+  id: string
+  name: string
+}
+
 export interface Project {
   id: string
   title: string
@@ -116,6 +129,8 @@ export interface Project {
   step: Step
   coverAssetId: string | null
   editor: EditorSettings
+  /** Immutable prompt snapshot chosen when this project was created; null retains legacy settings. */
+  promptProfile: PromptPreset | null
   createdAt: number
   updatedAt: number
 }
@@ -201,7 +216,7 @@ export interface Asset {
 }
 
 /** "narration" voices several scenes in one take and cuts it per scene. */
-export type JobKind = 'story' | 'image' | 'sheet' | 'video' | 'tts' | 'narration' | 'align' | 'export' | 'effects'
+export type JobKind = 'visuals' | 'story' | 'publication' | 'thumbnail' | 'image' | 'sheet' | 'video' | 'tts' | 'narration' | 'align' | 'export' | 'effects'
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled'
 
 export interface Job {
@@ -220,12 +235,33 @@ export interface Job {
   updatedAt: number
 }
 
+export interface ContinuityCorrection {
+  planRevision?: { from: string; to: string }
+  at: number
+  version: string
+  provider: string
+  model: string
+  notes: string[]
+  changes: { scene: number; clipId: string; field: string; before: string; after: string; reason: string }[]
+}
+
+export interface PublicationMaterials {
+  title: string
+  description: string
+  thumbnailPrompt: string
+  source: string
+  stale: boolean
+}
+
 export interface ProjectBundle {
   project: Project
   characters: Character[]
   clips: Clip[]
   assets: Asset[]
   jobs: Job[]
+  visualCorrections?: ContinuityCorrection[]
+  visualDiagnostics?: string[]
+  visualContinuity?: { version: string; world: string; direction: string; recurringDesigns: string; conflicts: string[] } | null
 }
 
 export interface ProjectSummary {
@@ -242,12 +278,13 @@ export interface ProjectSummary {
 
 /** What the renderer sends on save. Asset links are owned by the main process and never overwritten by a save. */
 export interface ProjectSnapshot {
-  project: Omit<Project, 'createdAt' | 'updatedAt' | 'coverAssetId'>
+  project: Omit<Project, 'createdAt' | 'updatedAt' | 'coverAssetId' | 'promptProfile'>
   characters: Omit<Character, 'sheetAssetId'>[]
   clips: Omit<Clip, 'imageAssetId' | 'videoAssetId' | 'audioAssetId'>[]
 }
 
 export interface NewProjectInput {
+  promptPresetId?: string
   synopsis?: string
   durationSec?: number
   language?: string
@@ -281,6 +318,7 @@ export interface VoiceOption {
 }
 
 export interface AppSettings {
+  promptPresets: PromptPreset[]
   /** Blank uses the shipped creative instructions. Output schemas remain fixed. */
   scriptInstructionsMode: InstructionMode
   visualInstructionsMode: InstructionMode

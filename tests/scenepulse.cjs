@@ -91,7 +91,7 @@ test('generation loads bundled skill into the configured LLM and publishes no pa
 test('Gemini planning cancellation carries the signal and never retries an aborted schema request',async()=>{
  const controller=new AbortController();let count=0
  const gemini=load('main/services/gemini.ts',{'@shared/speech':{},'@shared/models':{},'../secrets':{requireSecret:()=> 'test-only-key'},
-  '../settings':{},'./audio':{},'./json':{},'@google/genai':{GoogleGenAI:class{models={generateContent:async req=>{
+  '../settings':{},'./audio':{},'./json':{}, './visualRetry':load('main/services/visualRetry.ts'),'@google/genai':{GoogleGenAI:class{models={generateContent:async req=>{
    count++;assert.equal(req.config.abortSignal,controller.signal);controller.abort();throw Error('INVALID_ARGUMENT schema')
   }}}}})
  await assert.rejects(gemini.generateJson('test','system','prompt',{},controller.signal),/Dibatalkan/)
@@ -105,4 +105,35 @@ test('failed process launch and cancellation reject cleanly without leaving a pe
  const promise=runtime.scenePulseProcess(process.execPath,['-e','setInterval(()=>{},1000)'],ctx,root)
  setTimeout(()=>controller.abort(),100)
  await assert.rejects(promise,/Dibatalkan/)
+})
+
+
+test('packaged motion copies its explicitly bundled GSAP notice when dependency README files are stripped',async()=>{
+ const folder=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'bang-fx-packaged-'))
+ const resources=path.join(folder,'resources'),modules=path.join(resources,'app.asar.unpacked/node_modules'),work=path.join(folder,'work')
+ fs.mkdirSync(path.join(modules,'gsap/dist'),{recursive:true});fs.mkdirSync(path.join(resources,'licenses'),{recursive:true});fs.mkdirSync(path.join(resources,'scenepulse'),{recursive:true});fs.mkdirSync(work)
+ for(const file of ['dist/gsap.min.js','package.json'])fs.copyFileSync(path.join(root,'node_modules/gsap',file),path.join(modules,'gsap',file))
+ const notice=fs.readFileSync(path.join(root,'node_modules/gsap/README.md'),'utf8')
+ fs.writeFileSync(path.join(resources,'licenses/GSAP-README.md'),notice)
+ fs.writeFileSync(path.join(resources,'scenepulse/ORIGIN.json'),JSON.stringify({skillVersion:fx.SCENEPULSE_VERSION,files:[]}))
+ const browser=path.join(folder,'browser.exe');fs.writeFileSync(browser,'fixture');fs.writeFileSync(path.join(work,'base.mp4'),'fixture')
+ const descriptor=Object.getOwnPropertyDescriptor(process,'resourcesPath'),calls=[]
+ Object.defineProperty(process,'resourcesPath',{value:resources,configurable:true})
+ try{
+  const {EventEmitter}=require('node:events')
+  const api=load('main/scenePulseRuntime.ts',{
+   electron:{app:{isPackaged:true,getAppPath:()=>path.join(resources,'app.asar')}},
+   './paths':{binPath:p=>p.replace('app.asar','app.asar.unpacked'),dataDir:()=>folder},
+   '@shared/scenePulse':fx,'ffmpeg-static':'fixture-ffmpeg',
+   '@puppeteer/browsers':{Browser:{CHROMEHEADLESSSHELL:'shell'},detectBrowserPlatform:()=> 'win64',computeExecutablePath:()=>browser},
+   'node:child_process':{spawn:(command,args,options)=>{calls.push({command,args,options});const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();process.nextTick(()=>child.emit('close',0));return child}}
+  })
+  assert.ok(!fs.existsSync(path.join(modules,'gsap/README.md')))
+  await api.renderScenePulseVisual({motion:{presetId:'static',amount:0},graphics:[],audio:[]},1000,320,180,fx.EFFECT_STYLES[0].id,path.join(work,'base.mp4'),path.join(work,'visual.mp4'),{signal:new AbortController().signal,progress(){}})
+  assert.equal(fs.readFileSync(path.join(work,'GSAP-README.md'),'utf8'),notice)
+  assert.equal(calls.length,1);assert.equal(calls[0].args[1],'render');assert.equal(calls[0].options.env.ELECTRON_RUN_AS_NODE,'1')
+ }finally{
+  if(descriptor)Object.defineProperty(process,'resourcesPath',descriptor);else delete process.resourcesPath
+  fs.rmSync(folder,{recursive:true,force:true})
+ }
 })

@@ -33,6 +33,13 @@ const api: StudioApi = {
     visuals: call('story:visuals'),
     musicPrompt: call('story:musicPrompt')
   },
+  publication: {
+    get: call('publication:get'),
+    save: call('publication:save'),
+    generate: call('publication:generate'),
+    thumbnail: call('publication:thumbnail'),
+    saveThumbnail: call('publication:saveThumbnail')
+  },
   generate: {
     clipImage: call('generate:clipImage'),
     clipVideo: call('generate:clipVideo'),

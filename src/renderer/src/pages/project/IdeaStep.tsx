@@ -11,7 +11,7 @@ import { errorText } from '../../lib/format'
 import { geminiPreview } from '../../lib/voicePreviews'
 import { TTS_NAMES, ttsReadiness, usableTts } from '../../lib/keys'
 import { useApp } from '../../store/app'
-import { useProject } from '../../store/project'
+import { isRunning, jobFor, useProject } from '../../store/project'
 import { ModelSection } from './ModelSection'
 
 /** One sample plays at a time, from the list rows or the button beside the picker. */
@@ -103,7 +103,7 @@ function VoicePicker({ provider, value, onChange }: { provider: TtsProvider; val
 }
 
 export function IdeaStep() {
-  const { project, clips, updateProject, flush, load } = useProject()
+  const { project, clips, updateProject, flush, upsertJob, jobs } = useProject()
   const { toast, go } = useApp()
   const [busy, setBusy] = useState(false)
   const [writer, setWriter] = useState<{ provider: LlmProvider; model: string } | null>(null)
@@ -150,9 +150,8 @@ export function IdeaStep() {
     setBusy(true)
     try {
       await flush()
-      const bundle = await window.api.story.script(project.id)
-      load(bundle)
-      toast('success', `${bundle.clips.length} adegan siap. Baca dan rapikan naskahnya dulu.`)
+      if (useProject.getState().saveState === 'error') throw new Error('Simpan perubahan proyek dulu sebelum menyusun naskah.')
+      upsertJob(await window.api.story.script(project.id, clips.length ? 'new' : 'resume'))
     } catch (e) {
       toast('error', errorText(e))
     } finally {
@@ -322,7 +321,7 @@ export function IdeaStep() {
             Lihat naskah
           </Button>
         )}
-        <Button variant="primary" size="lg" className="h-[50px]" loading={busy} icon={!busy && <Sparkles className="size-[18px]" />} onClick={() => void compose()}>
+        <Button variant="primary" size="lg" className="h-[50px]" loading={busy || isRunning(jobFor(jobs, 'story', {}))} icon={!busy && <Sparkles className="size-[18px]" />} onClick={() => void compose()}>
           {clips.length ? 'Susun ulang naskah' : 'Susun naskah'}
         </Button>
       </footer>
